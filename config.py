@@ -10,6 +10,6 @@ BRONZE_CHICAGO_PATH = "bronze/chicago_api/"
 CHECKPOINT_FILE = "ingestion/chicago/checkpoint.txt"
 
 # -------- YOUTUBE --------
-YOUTUBE_API_KEY = "AIzaSyCMF61ChAhsh_K9DkZWuAsXX0gprQpidl8"
+YOUTUBE_API_KEY = "YOUR_API_KEY"
 YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3"
 BRONZE_YOUTUBE_PATH = "bronze/youtube/"
