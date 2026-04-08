@@ -2,7 +2,6 @@ import requests
 import time
 from config import CHICAGO_API_URL, LIMIT, MAX_RETRY
 
-
 def fetch_api_data(offset):
 
     params = {

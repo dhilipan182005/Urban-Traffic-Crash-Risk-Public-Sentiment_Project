@@ -1,0 +1,4 @@
+pyspark==3.5.0
+pyyaml
+requests
+python-dotenv
