@@ -1,0 +1,9 @@
+keywords:
+  - traffic accident
+  - road safety
+
+region: IN
+language: en
+max_results: 50
+
+youtube_output: /workspace/data/bronze/youtube

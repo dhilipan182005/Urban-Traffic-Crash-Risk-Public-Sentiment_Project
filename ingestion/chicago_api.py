@@ -1,61 +1,58 @@
 import os
 import json
-import time
-from datetime import datetime
-from config.config import *
-from ingestion.api_client import fetch_api_data
+from datetime import datetime, timezone
+from config.config import CHICAGO_API_URL, CHICAGO_API_TOKEN, BRONZE_CHICAGO, LIMIT
 from utils.utils import log_info, log_error
+from utils.api_handler import request_with_retry
 
+# Ensure bronze directory exists
 os.makedirs(BRONZE_CHICAGO, exist_ok=True)
 
-def get_last_offset():
-    if not os.path.exists(CHECKPOINT_FILE):
-        return 0
-    with open(CHECKPOINT_FILE, "r") as f:
-        return int(f.read().strip())
-
-def save_checkpoint(offset):
-    with open(CHECKPOINT_FILE, "w") as f:
-        f.write(str(offset))
-
-def save_json(data, batch_id):
-    path = f"{BRONZE_CHICAGO}/batch_{batch_id}.json"
-    with open(path, "w") as f:
-        json.dump(data, f)
-    log_info(f"Saved batch {batch_id}")
-
 def ingest():
+    """Ingest crash data from Chicago API in batches."""
+    offset = 0
+    batch = 0
+    headers = {"X-App-Token": CHICAGO_API_TOKEN} if CHICAGO_API_TOKEN else {}
 
-    offset = get_last_offset()
-    batch_id = offset // LIMIT
+    log_info("Starting Chicago API Ingestion...")
 
     while True:
+        params = {
+            "$limit": LIMIT,
+            "$offset": offset
+        }
 
-        log_info(f"Fetching offset {offset}")
-
-        data = fetch_api_data(offset)
+        data = request_with_retry(CHICAGO_API_URL, params=params, headers=headers)
 
         if not data:
-            log_info("No more data")
+            log_info("No more data from Chicago API or persistent error occurred.")
             break
 
-        # metadata
-        enriched = {
+        # Socrata API might return empty list when offset exceeds total records
+        if len(data) == 0:
+            log_info("Empty response received. Ingestion complete.")
+            break
+
+        # Production-quality metadata with UTC 'Z' format
+        output = {
             "data": data,
             "metadata": {
-                "source": "chicago_api",
-                "ingestion_time": str(datetime.now()),
-                "batch_id": batch_id
+                "batch_id": batch,
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "source": "chicago_data_portal"
             }
         }
 
-        save_json(enriched, batch_id)
+        file_path = os.path.join(BRONZE_CHICAGO, f"batch_{batch}.json")
+        with open(file_path, "w") as f:
+            json.dump(output, f)
+
+        log_info(f"Successfully saved batch {batch} ({len(data)} records) to {file_path}")
 
         offset += LIMIT
-        batch_id += 1
-        save_checkpoint(offset)
+        batch += 1
 
-        time.sleep(SLEEP_TIME)
+    log_info("Chicago API Ingestion Finished.")
 
 if __name__ == "__main__":
     ingest()

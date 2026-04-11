@@ -3,8 +3,6 @@ services:
   spark:
     build: .
     container_name: spark-local
-    ports:
-      - "4040:4040"
     volumes:
       - .:/workspace
     working_dir: /workspace
@@ -15,9 +13,21 @@ services:
 
     depends_on:
       - kafka
+      - mysql
 
   kafka:
     image: apache/kafka:3.9.2
     container_name: kafka
     ports:
       - "9092:9092"
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_DATABASE: data_pipeline
+      MYSQL_ROOT_PASSWORD: 182005kavi
+    volumes:
+      - ./scripts/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
