@@ -11,15 +11,11 @@ RUN wget https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoo
     && tar -xvf spark-3.5.0-bin-hadoop3.tgz \
     && mv spark-3.5.0-bin-hadoop3 spark \
     && rm spark-3.5.0-bin-hadoop3.tgz
-
-# Install wget
-RUN apt-get update && apt-get install -y wget
-
-# Download MySQL JDBC Driver
-# Using stable MySQL connector version compatible with Spark
+    
 RUN wget https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.0.33/mysql-connector-j-8.0.33.jar -P /opt/spark/jars/
+
 ENV SPARK_HOME=/opt/spark
-ENV PATH=$SPARK_HOME/bin:$PATH
+ENV PATH=$SPARK_HOME/bin:$JAVA_HOME/bin:$PATH
 
 WORKDIR /workspace
 

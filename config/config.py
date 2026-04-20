@@ -1,37 +1,39 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Base Path Configuration
-# If running in Docker, use /workspace, otherwise use current directory
-BASE_DIR = os.getenv("BASE_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA_ROOT = os.path.join(BASE_DIR, "data")
+BASE_DIR = "/workspace"
+DATA_ROOT = "/workspace/data"
 
-# Layer Paths
-BRONZE_CHICAGO = os.path.join(DATA_ROOT, "bronze", "chicago")
-BRONZE_YOUTUBE = os.path.join(DATA_ROOT, "bronze", "youtube")
+BRONZE_CHICAGO = "/workspace/data/bronze/chicago"
+BRONZE_YOUTUBE = "/workspace/data/bronze/youtube"
+SILVER_CHICAGO = "/workspace/data/silver/chicago"
+SILVER_YOUTUBE = "/workspace/data/silver/youtube"
+GOLD_CHICAGO = "/workspace/data/gold/chicago"
+GOLD_YOUTUBE = "/workspace/data/gold/youtube"
 
-SILVER_CHICAGO = os.path.join(DATA_ROOT, "silver", "chicago")
-SILVER_YOUTUBE = os.path.join(DATA_ROOT, "silver", "youtube")
+HDFS_BRONZE_CHICAGO = "hdfs://namenode:9000/user/hadoop/bronze/chicago"
+HDFS_BRONZE_YOUTUBE = "hdfs://namenode:9000/user/hadoop/bronze/youtube"
+HDFS_SILVER_CHICAGO = "hdfs://namenode:9000/user/hadoop/silver/chicago"
+HDFS_SILVER_YOUTUBE = "hdfs://namenode:9000/user/hadoop/silver/youtube"
+HDFS_GOLD_CHICAGO = "hdfs://namenode:9000/user/hadoop/gold/chicago"
+HDFS_GOLD_YOUTUBE = "hdfs://namenode:9000/user/hadoop/gold/youtube"
 
-GOLD_CHICAGO = os.path.join(DATA_ROOT, "gold", "chicago")
-GOLD_YOUTUBE = os.path.join(DATA_ROOT, "gold", "youtube")
 
-# API Configuration
+
+
 CHICAGO_API_URL = "https://data.cityofchicago.org/resource/85ca-t3if.json"
 CHICAGO_API_TOKEN = os.getenv("API_TOKEN")
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3"
 
-# Ingestion Settings
 LIMIT = 1000
 MAX_RETRIES = 5
 BACKOFF_FACTOR = 2
 SLEEP_TIME = 5
 
-# Metadata
-STATE_FILE = os.path.join(BASE_DIR, "metadata", "state.json")
-LOG_FILE = os.path.join(BASE_DIR, "logs", "app.log")
+STATE_FILE = "/workspace/metadata/state.json"
+LOG_FILE = "/workspace/logs/pipeline.log"
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"

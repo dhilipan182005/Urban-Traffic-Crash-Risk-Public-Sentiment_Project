@@ -1,95 +1,91 @@
-from pyspark.sql.functions import col, to_timestamp, year, month, when, round, explode, lit
+from pyspark.sql.functions import col, to_timestamp, year, month, when, desc, row_number
+from pyspark.sql.window import Window
+from utils.utils import log_info, log_error
 
-def validate_chicago(df):
-    # remove records missing the essential crash id
+def check_nulls(df, column_name):
+    null_count = df.filter(col(column_name).isNull()).count()
+    if null_count > 0:
+        log_info(f"DQ Alert: Column '{column_name}' has {null_count} null records.")
+    return null_count
+
+def check_numeric_validity(df, column_name, min_val=0):
+    invalid_count = df.filter((col(column_name) < min_val) | col(column_name).isNull()).count()
+    if invalid_count > 0:
+        log_info(f"DQ Alert: Column '{column_name}' has {invalid_count} records below {min_val} or null.")
+    return invalid_count
+
+def transform_chicago_dq(df):
+    log_info("Starting DQ validation for Chicago dataset...")
+    
+    initial_count = df.count()
+    
     df = df.filter(col("crash_record_id").isNotNull())
+    df = df.filter(col("injuries_total") >= 0)
     
-    # keep total injuries within valid positive ranges, ignoring nulls
-    df = df.filter((col("injuries_total").isNull()) | (col("injuries_total") >= 0))
+    final_count = df.count()
+    dropped = initial_count - final_count
     
+    log_info(f"DQ Result: {final_count} valid records kept, {dropped} invalid records dropped.")
+    return df
+
+def transform_youtube_dq(df):
+    log_info("Starting DQ validation for YouTube dataset...")
+    
+    initial_count = df.count()
+    
+    df = df.filter(col("video_id").isNotNull())
+    df = df.filter(col("views") >= 0)
+    
+    final_count = df.count()
+    dropped = initial_count - final_count
+    
+    log_info(f"DQ Result: {final_count} valid records kept, {dropped} invalid records dropped.")
     return df
 
 def transform_chicago(df):
-    # explode nested array if raw data hasn't been flattened yet
-    if "data" in df.columns:
-        df = df.select(explode("data").alias("record")).select("record.*")
-        
-    # remove records with blank crash IDs
-    df = df.filter(col("crash_record_id").isNotNull())
-    
-    # convert date string to actual timestamp format
+    log_info("Applying transformations to Chicago data...")
+
+    window_spec = Window.partitionBy("crash_record_id").orderBy(desc("crash_date"))
+    df = df.withColumn("row_num", row_number().over(window_spec)) \
+           .filter(col("row_num") == 1) \
+           .drop("row_num")
+
     df = df.withColumn("crash_date", to_timestamp("crash_date"))
-    
-    # extract year and month into separate columns
     df = df.withColumn("year", year("crash_date")) \
            .withColumn("month", month("crash_date"))
-    
-    # create severity flag based on injury counts
+
     df = df.withColumn(
         "severity",
-        when(col("injuries_total") >= 5, "HIGH")
+        when((col("injuries_total") >= 5), "HIGH")
         .when(col("injuries_total") >= 1, "MEDIUM")
         .otherwise("LOW")
     )
-    
-    # clear exact duplicate crash events
-    df = df.dropDuplicates(["crash_record_id"])
-    
-    return df
 
-def validate_youtube(df):
-    # clear records that failed to parse a video id
-    df = df.filter(col("video_id").isNotNull())
-    
-    # ensure views metric is not a negative number
-    if "views" in df.columns:
-        df = df.filter(col("views") >= 0)
-    
+    df = df.withColumn(
+        "time_of_day",
+        when(col("lighting_condition").contains("DAYLIGHT"), "DAY")
+        .otherwise("NIGHT")
+    )
+
     return df
 
 def transform_youtube(df):
-    # explode data array if passing raw bronze json directly
-    if "data" in df.columns:
-        df = df.select(explode("data").alias("item"))
-    elif "items" in df.columns:
-        df = df.select(explode("items").alias("item"))
-        
-    # extract fields into top-level columns if nested in 'item'
-    if "item" in df.columns:
-        df = df.select(
-            col("item.id.videoId").alias("video_id"),
-            col("item.snippet.title").alias("title"),
-            col("item.statistics.viewCount").alias("views"),
-            col("item.statistics.likeCount").alias("likes"),
-            col("item.statistics.commentCount").alias("comments")
-        )
-        
-    # safely add dummy metric columns if extraction missed them
-    for c in ["views", "likes", "comments"]:
-        if c not in df.columns:
-            df = df.withColumn(c, lit(0))
-            
-    # convert text strings to long numeric types
-    df = df.withColumn("views", col("views").cast("long")) \
-           .withColumn("likes", col("likes").cast("long")) \
-           .withColumn("comments", col("comments").cast("long"))
+    log_info("Applying transformations to YouTube data...")
 
-    # clear blank video ids
-    df = df.filter(col("video_id").isNotNull())
-    
-    # remove duplicate videos
-    df = df.dropDuplicates(["video_id"])
+    window_spec = Window.partitionBy("video_id").orderBy(desc("views"))
+    df = df.withColumn("row_num", row_number().over(window_spec)) \
+           .filter(col("row_num") == 1) \
+           .drop("row_num")
 
-    # calculate engagement relative to total views
     df = df.withColumn(
         "engagement_score",
-        round(when(col("views") > 0, (col("likes") + col("comments")) / col("views")).otherwise(0.0), 4)
+        when(col("views") > 0, (col("likes") + col("comments")) / col("views"))
+        .otherwise(0)
     )
-    
-    # flag viral videos over 1 million views
+
     df = df.withColumn(
         "is_viral",
         when(col("views") > 1000000, True).otherwise(False)
     )
-    
-    return df
+
+    return df

@@ -1,88 +1,74 @@
+#!/usr/bin/env python3
+import sys
+import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, explode
-from config.config import BRONZE_YOUTUBE, SILVER_YOUTUBE
-from processing.transformations import validate_youtube, transform_youtube
-import os
+from config.config import HDFS_BRONZE_YOUTUBE, BRONZE_YOUTUBE, SILVER_YOUTUBE, HDFS_SILVER_YOUTUBE
+from processing.transformations import transform_youtube, transform_youtube_dq
+from utils.utils import log_info, log_success, log_error, print_summary, save_local_copy
 
-def process():
+def main():
+    log_info("Silver YouTube Processing - Running")
+
     spark = SparkSession.builder \
-        .appName("Silver-YouTube") \
-        .config("spark.jars", "/opt/spark/jars/mysql-connector-j-8.0.33.jar") \
+        .appName("Silver-YouTube-Processing") \
         .getOrCreate()
-    
-    print(f"[INFO] Reading raw data from: {BRONZE_YOUTUBE}")
-    if not os.path.exists(BRONZE_YOUTUBE) or not os.listdir(BRONZE_YOUTUBE):
-        print("[WARNING] No data found in Bronze YouTube. Exiting.")
-        return
 
-    # Read all JSON batches
-    df = spark.read.json(BRONZE_YOUTUBE)
-    
-    # Extract records and flatten schema
-    df = df.select(explode("data").alias("item"))
-    # Base columns
-    select_cols = [
-        col("item.id.videoId").alias("video_id"),
-        col("item.snippet.title").alias("title"),
-        col("item.snippet.channelTitle").alias("channel"),
-        col("item.snippet.publishedAt").alias("published_at")
-    ]
-    
-    # Add statistics if available in schema (populated by updated youtube_api.py)
-    item_fields = df.select("item.*").columns
-    if "statistics" in item_fields:
-        select_cols.extend([
-            col("item.statistics.viewCount").alias("views"),
-            col("item.statistics.likeCount").alias("likes"),
-            col("item.statistics.commentCount").alias("comments")
-        ])
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try:
+        try:
+            log_info(f"Reading bronze data from HDFS: {HDFS_BRONZE_YOUTUBE}")
+            df = spark.read.json(f"{HDFS_BRONZE_YOUTUBE}/*.json")
+            df.count()
+        except Exception as hdfs_err:
+            log_info(f"HDFS bronze not available ({hdfs_err}), falling back to local: {BRONZE_YOUTUBE}")
+            if not os.path.exists(BRONZE_YOUTUBE):
+                log_error(f"Local bronze path also missing: {BRONZE_YOUTUBE} — run ingestion first.")
+                sys.exit(1)
+            df = spark.read.json(f"file:///{BRONZE_YOUTUBE.lstrip('/')}/*.json")
+
+        if df.rdd.isEmpty():
+            log_error("Silver YouTube: bronze layer is empty — no data to process")
+            sys.exit(1)
+
+        df = df.select(explode("data").alias("item"))
         
-    df = df.select(*select_cols)
+        df = df.select(
+            col("item.id").alias("video_id"),
+            col("item.snippet.title").alias("title"),
+            col("item.snippet.publishedAt").alias("published_at"),
+            col("item.snippet.channelTitle").alias("channel"),
+            col("item.statistics.viewCount").cast("long").alias("views"),
+            col("item.statistics.likeCount").cast("long").alias("likes"),
+            col("item.statistics.commentCount").cast("long").alias("comments")
+        )
+        
+        df = df.na.fill(0, ["views", "likes", "comments"])
 
-    # Search results don't have statistics. If we need them, we would call videos.list.
-    # For now, we will add dummy columns if they are missing to avoid breaking downstream
-    for c in ["views", "likes", "comments"]:
-        if c not in df.columns:
-            from pyspark.sql.functions import lit
-            df = df.withColumn(c, lit(0).cast("long"))
+        initial_count = df.count()
+        if initial_count == 0:
+            log_error("Silver YouTube: no records after explode — exiting")
+            sys.exit(1)
+        log_info(f"Total raw records loaded: {initial_count}")
 
-    initial_count = df.count()
-    print(f"[INFO] Records ingested: {initial_count}")
+        df = transform_youtube_dq(df)
+        df = transform_youtube(df)
+        
+        print_summary(df, "Silver YouTube")
 
-    # Data Quality Validation
-    df = validate_youtube(df)
-    
-    # Deduplication
-    df = df.dropDuplicates(["video_id"])
-    final_count = df.count()
-    print(f"[INFO] Records after deduplication: {final_count}")
+        save_local_copy(df, SILVER_YOUTUBE)
+        
+        log_info(f"Writing silver data to HDFS: {HDFS_SILVER_YOUTUBE}")
+        df.write.mode("overwrite").parquet(HDFS_SILVER_YOUTUBE)
 
-    # Transformations
-    df = transform_youtube(df)
+        log_success("Silver YouTube Processing - Completed")
 
-    print("\n[INFO] --- Silver YouTube Schema ---")
-    df.printSchema()
-    print("\n[INFO] --- Silver YouTube Sample Data ---")
-    df.show(5, truncate=False)
-
-    # Save to Silver
-    print(f"[INFO] Saving cleaned data to: {SILVER_YOUTUBE}")
-    df.write.mode("overwrite").parquet(SILVER_YOUTUBE)
-    
-    # Save to MySQL (select only flat columns — nested structs are not JDBC-compatible)
-    print(f"[INFO] Saving cleaned data to MySQL table: youtube_data")
-    mysql_columns = [c for c, t in df.dtypes if t in ("string", "int", "bigint", "long", "double", "float", "boolean", "timestamp", "date", "integer")]
-    df.select(mysql_columns).write \
-        .format("jdbc") \
-        .option("url", "jdbc:mysql://mysql:3306/data_pipeline") \
-        .option("dbtable", "youtube_data") \
-        .option("user", "root") \
-        .option("password", "182005kavi") \
-        .option("driver", "com.mysql.cj.jdbc.Driver") \
-        .mode("overwrite") \
-        .save()
-    
-    print("[INFO] Silver YouTube Processing Complete.")
+    except Exception as e:
+        log_error(f"Silver YouTube Processing failed: {str(e)}")
+        sys.exit(1)
+    finally:
+        spark.stop()
 
 if __name__ == "__main__":
-    process()
+    main()

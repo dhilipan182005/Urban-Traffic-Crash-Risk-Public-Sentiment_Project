@@ -3,3 +3,7 @@ pyyaml
 requests
 python-dotenv
 pymysql
+pyarrow
+fastapi
+uvicorn
+pandas
